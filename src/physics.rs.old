@@ -1,0 +1,174 @@
+extern crate nalgebra_glm as glm;
+
+use rand::Rng;
+
+use crate::graphics::Color;
+use crate::array2d::*;
+
+#[derive(Clone, Copy)]
+struct Circle {
+	position: glm::Vec2,
+	position_old: glm::Vec2,
+	acceleration: glm::Vec2,
+	color: Color
+}
+
+#[derive(Clone, Copy)]
+pub struct Cell {
+	count: usize,
+	indices: [usize; 15]
+}
+
+pub struct Physics {
+	width: f32,
+	height: f32,
+	grid: Array2D<Cell>,
+	circles: Vec<Circle>,
+	circle_radius: f32
+}
+
+#[allow(dead_code)]
+impl Physics {
+	pub fn new(w: usize, h: usize) -> Physics {
+		Physics {
+			width:  w as f32,
+			height: h as f32,
+			grid: Array2D::new(w, h, Cell { count: 0, indices: [0; 15] }),
+			circles: Vec::with_capacity(w * h),
+			circle_radius: 0.5,
+		}
+	}
+
+	pub fn add_circle(&mut self, _x: f32, _y: f32) -> usize {
+		let index = self.circles.len();
+		self.circles.push(Circle { position: glm::vec2(self.width / 2.0, self.height / 2.0), position_old: glm::vec2(self.width / 2.0 - (rand::thread_rng().gen_range(-200..200)) as f32 / 1000.0, self.height / 2.0), acceleration: glm::vec2(0.0, 0.0), color: Color { r: 255, g: 48, b: 48, a: 255 } });
+		index
+	}
+
+	pub fn update(&mut self, dt: f32) {
+		let step_count = 8;
+		let step_dt = dt / step_count as f32;
+		for _ in [0..step_count] {
+			self.step(step_dt);
+		}
+	}
+
+	fn step(&mut self, dt: f32) {
+
+		// collisions
+		for i in 0..self.circles.len() {
+			for j in 0..self.circles.len() {
+				if i != j {
+					let c1 = self.circles[i];
+					let c2 = self.circles[j];
+					let collision_axis = c1.position - c2.position;
+					let distance = glm::length(&collision_axis);
+					if distance < 2.0 * self.circle_radius {
+						let n = collision_axis / distance;
+						let delta = 2.0 * self.circle_radius - distance;
+						self.circles.get_mut(i).unwrap().position = c1.position + n * (0.5 * delta);
+						self.circles.get_mut(j).unwrap().position = c2.position - n * (0.5 * delta);
+					}
+				}
+			}
+		}
+
+		
+		// reset spatial hashes
+		/*for cell in self.grid.as_mut_vec().iter_mut() {
+			cell.count = 0;
+		}
+
+		// set spatial hashes
+		for (index, circle) in self.circles.iter().enumerate() {
+			let margin: f32 = 0.0;
+			if circle.position.x > margin && circle.position.x < self.width - margin && circle.position.y > margin && circle.position.y < self.height - margin {
+				let cell: &mut Cell = &mut self.grid[(circle.position.x as usize, circle.position.y as usize)];
+				if cell.count == 15 {
+					println!("x: {}, y: {}", circle.position.x as usize, circle.position.y as usize);
+				}
+				cell.indices[cell.count] = index;
+				cell.count += 1;
+			}
+		}
+
+		// collisions
+		for y in 0i32..self.grid.height() as i32 {
+			for x in 0i32..self.grid.width() as i32 {
+				self.cell_collision(x, y);
+			}
+		}*/
+
+		// gravity
+		let gravity: glm::Vec2 = glm::vec2(0.0, -9800.0);
+		for mut circle in self.circles.iter_mut() {
+			circle.acceleration = circle.acceleration + gravity;
+		}
+
+		// movement
+		for mut circle in self.circles.iter_mut() {
+			let velocity: glm::Vec2 = circle.position - circle.position_old;
+			circle.position_old = circle.position;
+			circle.position = circle.position + velocity + circle.acceleration * dt * dt;
+			circle.acceleration = glm::vec2(0.0, 0.0);
+		}
+
+		// constraint
+		let margin: f32 = 1.0;
+		for circle in self.circles.iter_mut() {
+			if circle.position.x < margin {
+				circle.position.x = margin;
+			} else if circle.position.x > self.width - margin {
+				circle.position.x = self.width - margin;
+			}
+			if circle.position.y < margin {
+				circle.position.y = margin;
+			} else if circle.position.y > self.height - margin {
+				circle.position.y = self.height - margin;
+			}
+		}
+	}
+
+	fn cell_collision(&mut self, x: i32, y: i32) {
+		let cell = self.grid[(x as usize, y as usize)];
+		for dy in -1i32..2 {
+			let y_t = y + dy;
+			if y_t < 0 || y_t >= self.grid.height() as i32 {
+				continue;
+			}
+			for dx in -1i32..2	 {
+				let x_t = x + dx;
+				if x_t < 0 || x_t >= self.grid.width() as i32 {
+					continue;
+				}
+				let other_cell = self.grid[(x_t as usize, y_t as usize)];
+				for i in 0..cell.count {
+					let i1 = cell.indices[i];
+					let c1 = self.circles[i1];
+					for j in 0..other_cell.count {
+						let i2 = cell.indices[j];
+						if i1 != i2 {
+							let c2 = self.circles[i2];
+							let collision_axis = c1.position - c2.position;
+							let distance = glm::length(&collision_axis);
+							if distance < 2.0 * self.circle_radius {
+								let n = collision_axis / distance;
+								let delta = 2.0 * self.circle_radius - distance;
+								self.circles.get_mut(i1).unwrap().position = c1.position + n * (0.5 * delta);
+								self.circles.get_mut(i2).unwrap().position = c2.position - n * (0.5 * delta);
+							}
+						}
+							
+					}
+				}
+			}
+		}
+	}
+
+	pub fn render(&self, buffer: &mut Array2D<Color>) {
+		for circle in self.circles.iter() {
+			buffer[(circle.position.x as usize, circle.position.y as usize)] = circle.color;
+		}
+	}
+
+}
